@@ -1,0 +1,199 @@
+---
+title: "485 paper 3"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-04-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(ggplot2)
+library(arm)
+```
+
+## Overview  
+
+Paper 3 appendix provides Bradley-Terry models to rank NCAA women's basketball teams for the 2024-2025 season using the provided win-loss data for Division 1 contests. 
+1. We fit a plain-vanilla Bradley-Terry model. 
+2. We fit a model using a penalized form of logistic regression. 
+3. We then fit a model to account for game location (additional parameter permitting an increased (or decreased) probability of winning and measuring relative strengths of teams at the end of the regular season. 
+4. We then choose model 3 and rank the teams while also checking Michigan's odds against each of the 3 teams it played or it could have played in the first 2 rounds of the tournament. 
+5. We are finding the standard error of each rival team pair (3 in total) and adding a correction that controls the familywise type 1 error rate
+
+
+```{r cars}
+womens <- read.csv("http://stat.lsa.umich.edu/~bbh/s485/data/cbb-womens-2025-03-16.csv")
+womens$date <- as.Date(womens$date)
+
+```
+
+
+# 1
+```{r}
+model_1 <- glm(formula = home_win ~ . - 1 - Abilene.Christian, 
+               family = binomial, data = womens)
+summary(model_1)
+
+```
+
+
+# 2 
+
+```{r}
+model_2 <- bayesglm(formula = home_win ~ . - 1 - Abilene.Christian, 
+                    family = binomial, data = womens)
+summary(model_2)
+
+```
+
+
+# 3a 
+
+```{r}
+model_3 <- glm(formula = home_win ~ . - Abilene.Christian, family = binomial, 
+               data = womens)
+summary(model_3)
+model_3_rank <- sort(coef(model_3), decreasing = TRUE)
+model_3_rank
+
+```
+
+
+# 3b
+
+```{r}
+womens$numeric_date <- as.numeric(womens$date)
+
+model_4 <- glm(home_win ~ (. - date - Abilene.Christian - 1) + numeric_date,
+                    data = womens, family = binomial)
+summary(model_4)
+
+model_4_rank <- sort(coef(model_4), decreasing = TRUE)
+model_4_rank
+
+```
+
+
+# 4
+
+I prefer to use the model that accounts for game location, as it has a lower AIC meaning that itassesses the goodness of fit of a model. For model 1, the AIC is 5053.3; for model 2, the AIC is 5109.7; for model 3, the AIC is 5052.4; for model 4, the AIC is 5053.3. As we can see, model 3 has the lower AIC.
+
+
+# 5 
+
+```{r}
+model_3_rank <- sort(coef(model_3), decreasing = TRUE)
+
+print(head(model_3_rank, 10))
+print(tail(model_3_rank, 5))
+
+teams <- c("LSU", "Michigan", "USC")
+teams_coeff <- model_3_rank[teams]
+teams_coeff
+
+```
+
+
+# 6
+
+```{r}
+vcv <- vcov(model_3)[c("Michigan", "Georgia"), c("Michigan", "Georgia")]
+
+x <- numeric(ncol(vcv))
+names(x) <- colnames(vcv)
+x["Michigan"] <- 1
+x["Georgia"] <- -1
+
+se <- sqrt(t(x) %*% vcv %*% x)
+print(se)
+
+```
+
+
+```{r}
+vcv <- vcov(model_3)[c("Michigan", "Ohio.State"), c("Michigan", "Ohio.State")]
+
+x <- numeric(ncol(vcv))
+names(x) <- colnames(vcv)
+x["Michigan"] <- 1
+x["Ohio.State"] <- -1
+
+se <- sqrt(t(x) %*% vcv %*% x)
+print(se)
+
+```
+
+
+
+```{r}
+vcv <- vcov(model_3)[c("Michigan", "Michigan.State"), c("Michigan", "Michigan.State")]
+
+x <- numeric(ncol(vcv))
+names(x) <- colnames(vcv)
+x["Michigan"] <- 1
+x["Michigan.State"] <- -1
+
+se <- sqrt(t(x) %*% vcv %*% x)
+print(se)
+
+```
+
+
+# 7a 
+
+```{r}
+# standard error for Michigan vs. Georgia
+vcv_mg <- vcov(model_3)[c("Michigan", "Georgia"), c("Michigan", "Georgia")]
+se_mg <- sqrt(c(1, -1) %*% vcv_mg %*% c(1, -1))
+diff_mg <- coef(model_3)["Michigan"] - coef(model_3)["Georgia"]
+z_mg <- diff_mg / se_mg
+p_mg <- 1 - pnorm(z_mg)
+
+# standard error for Michigan vs. Ohio State
+vcv_mo <- vcov(model_3)[c("Michigan", "Ohio.State"), c("Michigan", "Ohio.State")]
+se_mo <- sqrt(c(1, -1) %*% vcv_mo %*% c(1, -1))
+diff_mo <- coef(model_3)["Michigan"] - coef(model_3)["Ohio.State"]
+z_mo <- diff_mo / se_mo
+p_mo <- 1 - pnorm(z_mo)
+
+# standard error for Michigan vs. Michigan State
+vcv_mm <- vcov(model_3)[c("Michigan", "Michigan.State"), c("Michigan", "Michigan.State")]
+se_mm <- sqrt(c(1, -1) %*% vcv_mm %*% c(1, -1))
+diff_mm <- coef(model_3)["Michigan"] - coef(model_3)["Michigan.State"]
+z_mm <- diff_mm / se_mm
+p_mm <- 1 - pnorm(z_mm)
+
+# p-values for all rival schools
+p <- c(p_mg, p_mo, p_mm)
+
+# using a correction
+p_adj <- p.adjust(p, method = "bonferroni")
+
+# print results
+cat("Michigan vs Georgia\n")
+cat("Log Odds Difference:", diff_mg, "\n")
+cat("Standard Error:", se_mg, "\n")
+cat("Z-statistic:", z_mg, "\n")
+cat("Raw p-value:", p_mg, "\n")
+cat("Adjusted p-value (Bonferroni):", p_adj[1], "\n\n")
+
+cat("Michigan vs Ohio State\n")
+cat("Log Odds Difference:", diff_mo, "\n")
+cat("Standard Error:", se_mo, "\n")
+cat("Z-statistic:", z_mo, "\n")
+cat("Raw p-value:", p_mo, "\n")
+cat("Adjusted p-value (Bonferroni):", p_adj[2], "\n\n")
+
+cat("Michigan vs Michigan State\n")
+cat("Log Odds Difference:", diff_mm, "\n")
+cat("Standard Error:", se_mm, "\n")
+cat("Z-statistic:", z_mm, "\n")
+cat("Raw p-value:", p_mm, "\n")
+cat("Adjusted p-value (Bonferroni):", p_adj[3], "\n")
+
+```
+
+
+
